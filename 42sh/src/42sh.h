@@ -73,4 +73,12 @@ typedef struct s_data
 	int				*fds;
 }	t_data;
 
+int	change_envopwd(t_env **env, char *opwd);
+int	change_envpwd(t_env **env);
+t_env	*env_lstnew(char *env, char **envp);
+t_env	*env_lstlast(t_env *lst);
+bool	env_lstclear(t_env *lst);
+
+
+
 #endif
