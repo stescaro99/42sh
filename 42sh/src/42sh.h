@@ -59,6 +59,7 @@ typedef struct s_line
 	struct s_line	*parenthesis;
 	short			type;
 	char			*line;
+	char			*command_path;
 	short			logic;
 	short			exit;
 	struct s_line	*next;
