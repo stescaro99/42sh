@@ -112,212 +112,127 @@ Nota: puoi riusare parti di Minishell dove già implementate (pipe/redir/handle_
   (echo a ; echo b) | wc -l
   ```
 
-3) **Parser con precedenze**
-- **Cosa**: costruisci AST/plan con livelli: `;` > `&&/||` > `|` > redirezioni.
-- **Come**: grammar tipo EBNF:
-  - `line := and_or (';' and_or)*`
-  - `and_or := pipeline (('&&'|'||') pipeline)*`
-  - `pipeline := command ('|' command)*`
-  - `command := [assign|redir]* simple_cmd [redir]* | subshell`
-  - `redir := [FD] ('>'|'>>'|'<'|'<<'|'<&'|'>&') WORD`
-  - `subshell := '(' line ')'
-- **Rappresentazione**: usa nodi per `;`, `&&`, `||`; pipeline come lista di comandi con redir locali; `(...)` come nodo con figlio.
-- **Test**:
-  ```sh
-  false && echo NO || echo YES ; echo DONE
-  ls x >/dev/null 2>&1  # differente da 2>&1 >/dev/null
-  ```
+# 42sh — Guida operativa e mappa dei file
 
-4) **Heredoc e regole di espansione**
-- **Cosa**: `<<` con delimitatore; se quotato, nessuna espansione nel corpo.
-- **Come**: rileva quote sul delimiter in lexing; marca il contesto heredoc; leggi fino alla linea esatta del delimiter.
-- **Test**:
-  ```sh
-  cat <<EOF
-  hello $USER
-  EOF
-  cat <<'EOF'
-  hello $USER
-  EOF
-  ```
+Questo README sostituisce e dettaglia la roadmap: ora contiene mappature consigliate file→funzioni, dove mettere ogni sorgente, e raccomandazioni per rispettare la Norminette (max 5 funzioni/file, 25 righe/funzione).
 
-5) **Espansioni minime**
-- **Cosa**: `$VAR`, `${VAR}`, `${?}`; tilde; quote removal.
-- **Come**: applica nell’ordine: param espansion → tilde → field splitting/globbing (se abilitato) → quote removal.
-- **Test**:
-  ```sh
-  echo $HOME ${?}
-  HOME=/tmp echo $HOME
-  echo "literal $HOME"
-  ```
+**Prerequisiti e build**
+- **Librerie**: `libc`, `readline` (`-lreadline`), `termcap`/`ncurses` se usi funzionalità avanzate del terminale.
+- **Libft**: includi `libft/` e compila prima.
+- **Flags**: `-Wall -Wextra -Werror`.
 
-6) **Executor (comando semplice, PATH, redirezioni, pipe)**
-- **Cosa**: esegui un comando con `execve`; gestisci `PATH`; applica redirezioni prima di `execve`; pipeline con `dup2`.
-- **Come**: per pipeline crea N-1 pipe; forka per ogni segmento; duplica STDIN/STDOUT; chiudi fd non usati.
-- **Test**:
-  ```sh
-  /bin/echo ok
-  echo ok | wc -c
-  ls >out.txt ; wc -l < out.txt
-  ```
+Esempio rapido:
+```sh
+make -C libft re
+make
+./42sh
+```
 
-7) **Logici `&&`/`||` e separatore `;`**
-- **Cosa**: valuta condizionali usando l’exit status del nodo precedente.
-- **Come**: `AND`: esegui il successivo solo se exit==0; `OR`: esegui solo se exit!=0; `;`: sempre.
-- **Test**:
-  ```sh
-  false && echo A || echo B ; echo C
-  ```
+**Nota Norminette (vincolo obbligatorio)**
+- Ogni file `.c` deve contenere al massimo 5 funzioni. Ogni funzione non deve superare 25 righe.
+- Strategia: spezza i moduli in più file piccoli (es. `lexer_state.c`, `lexer_tokens.c`) in modo che ogni file resti sotto il limite.
+- Conta anche le `static` — sono considerate funzioni ai fini della Norminette. Preferisci collocare helper in file separati.
 
-8) **Subshell `(...)`**
-- **Cosa**: esegui un gruppo in un processo figlio con proprio contesto.
-- **Come**: forka; ricostruisci (o condividi con regole chiare) env/memoria; esegui lista figlia; riporta exit status.
-- **Test**:
-  ```sh
-  (echo a ; echo b) | wc -l
-  (cd / ; pwd) ; pwd
-  ```
+**Struttura consigliata e cosa mettere in ogni file**
+Qui sotto trovi una mappa concreta: per ogni cartella suggerisco file e fino a 5 funzioni per file (nome e comportamento). Rispetta la regola 5 funzioni/file dividendo se necessario.
 
-9) **Built-in principali**
-- **Cosa**: `cd`, `echo`, `exit`, `type`, e quelli ereditati da Minishell (`pwd`, `env`, `export`, `unset`, `set`).
-- **Come**: built-in che cambiano stato shell (es. `cd`, `export`, `unset`, `exit`) vanno eseguiti nel processo principale; dentro pipeline puoi eseguire in child (attenzione agli effetti).
-- **Test**:
-  ```sh
-  echo -n "hi" ; echo type echo
-  cd / ; pwd
-  export A=1 ; env | grep '^A='
-  unset A ; set | grep '^A=' || echo missing
-  ```
+- `src/main.c`
+  - `main(int argc, char **argv, char **env)` — bootstrap: init `t_data`, loop shell, cleanup.
 
-10) **Job control**
-- **Cosa**: `&` (background), `jobs`, `fg`, `bg`.
-- **Come**: mantieni tabella job con pgid/statI; gestisci segnali e terminal control; `fg` porta il job in foreground e attende.
-- **Test**:
-  ```sh
-  sleep 5 & jobs
-  fg %1
-  ```
+- `src/ui/` (prompt, readline, history)
+  - `ui/prompt.c`
+    - `char *build_prompt(t_data *d)` — costruisce stringa prompt.
+    - `void print_header(void)` — (opzionale) banner iniziale.
+  - `ui/readline_integration.c`
+    - `char *read_line(t_data *d)` — invoca `readline`, gestisce `add_history`.
+    - `void setup_readline(void)` — init readline (completions, keybindings).
 
-11) **Segnali e Readline (comportamento interattivo)**
-- **Cosa**: `Ctrl-C` → nuova riga/prompt; `Ctrl-\` ignorato; `Ctrl-D` → exit su riga vuota.
-- **Come**: handler con singola variabile globale; reset segnali nei child prima di `execve`; integra con Readline.
+- `src/lexer/`
+  - `lexer/tokenize.c`
+    - `t_token *tokenize(const char *s)` — produce lista di token base.
+    - `void free_tokens(t_token *t)` — libera token.
+  - `lexer/state.c`
+    - `void lexer_init(t_lexer *lx, const char *s)` — init stato lexer.
+    - `t_token *lexer_next(t_lexer *lx)` — ritorna token successivo (semplice helper).
 
-12) **Qualità, errori e memoria**
-- **Cosa**: messaggi d’errore in stile shell (`strerror`); chiudi fd; free deterministici di token/AST/argv; niente leak.
-- **Come**: audit: per ogni via felice, verifica fd chiusi e ownership chiara; usa strumenti (valgrind) su Linux.
+- `src/parser/`
+  - `parser/line_parser.c`
+    - `t_line *parse_line(t_token *tokens)` — parsing ad alto livello (`;`, `&&`, `||`).
+    - `void free_line(t_line *line)` — libera struttura AST/minimap.
+  - `parser/command_parser.c`
+    - `t_cmd *parse_command(t_token **curr)` — costruisce `t_cmd` (argv + redirs).
 
-13) **Modulare: seleziona ≥6 feature**
-- **Scelta (le 6 più facili e mirate)**
-  1. **Inibitori: doppi/singoli apici e backslash**
-     - **Cosa**: gestisci `"..."`, `'...'`, e `\` (escape) nel lexer; rimuovi quote in fase di espansione mantenendo semantiche: in `'...'` niente espansioni; in `"..."` consenti `$VAR`/`${}` ma blocca globbing/split.
-     - **Come**: stato di quoting nel lexer; marca token con attributi (`quoted_single`, `quoted_double`); backslash attivo fuori da `'...'` e dentro `"..."`.
-     - **Test**: `echo "a b" 'c d' e\ f` → argv coerenti; niente espansioni in `'...'`.
+- `src/expansion/`
+  - `expansion/params.c`
+    - `char *expand_params(t_data *d, const char *word)` — `${}`, `$?`, `$VAR`.
+  - `expansion/quote_remove.c`
+    - `char *remove_quotes(const char *s)` — elimina apici/escape lasciando semantica.
+  - `expansion/tilde_and_glob.c`
+    - `char **apply_globbing(char **words)` — espande `*`, `?`, `[ ]` (opzionale).
 
-  2. **Espansioni avanzate e tilde**
-     - **Cosa**: estendi espansioni a una sotto–lista facile e utile:
-       - Tilde: `~`, `~user` (opzionale) → espandi a `HOME` (o home di `user`).
-       - Parametri: `${parameter:-word}`, `${parameter:+word}`, `${#parameter}` (lunghezza), `${?}`.
-     - **Come**: parser di `${...}` sul token WORD non in `'...'`; valuta secondo ordine: param → tilde → split/globbing (se attivo) → quote removal.
-     - **Test**: `echo ${USER:-nobody} ${#HOME} ~`.
+- `src/heredoc/`
+  - `heredoc/heredoc.c`
+    - `int handle_heredoc(t_data *d, const char *delim, bool quoted)` — legge e crea temp file, ritorna fd.
 
-  3. **Command substitution `$()`**
-     - **Cosa**: sostituisci `$(cmd)` con l’output (stdout) di `cmd` catturato come stringa nel punto di espansione.
-     - **Come**: durante espansioni, quando incontri `$(`, parse annidato fino alla `)` bilanciata; esegui in subshell/pipeline, cattura stdout via pipe, trim finale (rispetta quoting: in `"..."` niente globbing).
-     - **Test**: `echo $(echo hi)` → `hi`; `echo "x $(printf a\ b)"` → `x a b`.
+- `src/executor/`
+  - `executor/execve_utils.c`
+    - `char *resolve_path(t_data *d, const char *name)` — cerca in `PATH` e usa cache.
+    - `int launch_builtin(t_data *d, t_cmd *c)` — esegue built-in in main quando necessario.
+  - `executor/pipeline.c`
+    - `int run_pipeline(t_data *d, t_pipeline *pl)` — esegue pipeline con fork/dup2.
 
-  4. **Alias (`alias`, `unalias`)**
-     - **Cosa**: mappa `name -> replacement` con espansione testuale a inizio comando.
-     - **Come**: tabella alias (hash map); espandi prima del parsing del comando (non dentro pipeline già tokenizzata); evita ricorsione infinita (limite espansioni); non espandere dopo token come `(` o dopo redir immediate.
-     - **Built-in**:
-       - `alias` (senza opzioni): `alias` → lista; `alias name=value` → definizione.
-       - `unalias name` → rimozione.
-     - **Test**: `alias ll="ls -la" ; ll`.
+- `src/builtins/`
+  - `builtins/cd.c`
+    - `int builtin_cd(t_data *d, char **argv)` — cambia dir, aggiorna env `$PWD`/`$OLDPWD`.
+  - `builtins/echo.c`
+    - `int builtin_echo(char **argv)` — implementa `-n`.
+  - `builtins/export_unset.c`
+    - `int builtin_export(t_data *d, char **argv)`
+    - `int builtin_unset(t_data *d, char **argv)`
 
-  5. **Globbing di base (`*`, `?`, `[class]`)**
-     - **Cosa**: espandi pattern nel CWD a lista di path ordinati; se nessun match, lascia letterale (POSIX–like).
+- `src/env/`
+  - `env/env_list.c`
+    - `t_env *env_from_envp(char **envp)` — costruisce lista.
+    - `char **env_to_envp(t_env *e)` — serializza per `execve`.
+
+- `src/job/`
+  - `job/jobs.c`
+    - `int job_add(t_data *d, pid_t pgid, char *cmdline)` — registra job background.
+    - `void job_check_children(t_data *d)` — aggiorna stati al ritorno dei figli.
+
+- `src/signal/`
+  - `signal/handlers.c`
+    - `void setup_signals(void)` — installa handler compatibili con readline.
+    - `void sigint_handler(int sig)` — imposta stato globale per prompt.
+
+- `src/utils/`
+  - `utils/str_helpers.c` (es. 3–5 funzioni)
+    - `char *ft_strjoin_safe(...)`, `char **ft_split_ws(...)`, ecc.
+  - `utils/fd_helpers.c`
+    - `int safe_dup2(int oldfd, int newfd)` — dup2 con controllo.
+
+Consiglio: per ogni file `.c` mantieni al massimo 5 funzioni pubbliche/`static`. Se una funzione cresce oltre 25 righe, spostane pezzi in un altro file (es. `parser_util.c`) per rispettare la Norminette.
+
+**Esempi pratici di divisione per Norminette**
+- Se `tokenize()` è >25 righe: estrai `parse_operator()`, `parse_word()` e mettili in `lexer_token_helpers.c` (ogni helper conta come funzione in quel file). L'obiettivo è che ogni file contenga meno di 5 funzioni MA ogni funzione rimanga chiara e testabile.
+- Raggruppa gli helper strettamente correlati nello stesso file solo se il totale resta sotto 5 funzioni.
+
+**Test rapidi**
+- Controllo precedenze (es.)
+```sh
+false && echo NO || echo YES ; echo DONE
+```
+- Heredoc:
+```sh
+cat <<'EOF'
+$HOME
+EOF
+```
+
+**Consegna minima richiesta**
+- Eseguibile `42sh`.
+- `Makefile` (all/clean/fclean/re) che compila `libft/`.
+- Codice organizzato per rispettare la Norminette (vedi sopra).
+
+Vuoi che generi scheletri `.c/.h` per le cartelle sopra (es. file vuoti con protoprofili di funzioni) in modo che tu possa implementare rispettando subito la Norminette?
      - **Come**: matcher semplice: `*` → qualunque sequenza; `?` → un carattere; `[abc]` → set; `\` per escape; integrazione post–param espansion e prima di quote removal.
-     - **Test**: `echo *.c ??.h [a-z]*`.
-
-  6. **Tabella hash + built-in `hash`**
-     - **Cosa**: cache per lookup di comandi nel `PATH`.
-     - **Come**: all’esecuzione di un comando, risolvi e memorizza `name -> /abs/path`; invalida cache su `PATH` variato; `hash` mostra la tabella, `hash -r` (opzionale) la svuota.
-     - **Test**: `hash ; ls ; hash` (dovrebbe mostrare `ls` risolto).
-
-- **Come**: implementa ciascuna in moduli separati (`expansion/`, `alias/`, `globbing/`, `hash/`); abilita progressivamente e testa in isolamento; mantieni coerenza POSIX quando in dubbio.
-
----
-
-**Mini–roadmap per le 6 feature**
-- **A) Lexer/expansions groundwork (Inibitori + Tilde/Param)**
-  - A1: Stato quote/backslash nel lexer; token attribuiti.
-  - A2: Espansore: `${parameter:...}`, `~`, `${?}`, ordine e quote removal.
-- **B) Command substitution**
-  - B1: Parser per `$()` con bilanciamento; AST figlio.
-  - B2: Esecutore: subshell + pipe; cattura stdout.
-- **C) Alias**
-  - C1: Hash map alias; espansione pre–parse; limite ricorsione.
-  - C2: Built-in `alias`/`unalias`.
-- **D) Globbing**
-  - D1: Matcher `*`, `?`, `[class]`; integrazione nel flusso di espansioni.
-  - D2: Ordinamento risultati; fallback letterale.
-- **E) Hash table**
-  - E1: Cache PATH; invalidazione su `PATH` mutato; built-in `hash`.
-  - E2: Uso in exec per velocizzare lookup.
-
----
-
-**Riuso da Minishell (mapping pratico)**
-- `Minishell/src/handle_quote.c` → regole quote/escape: riutilizza e amplia per `${}`.
-- `Minishell/src/pipe_shell.c`, `Minishell/src/pipex_utils.c` → pipeline e `dup2`.
-- `Minishell/src/heredoc.c` → base per `<<` e regole di espansione su delimiter.
-- `Minishell/src/execve.c` → PATH lookup e `execve`.
-- `Minishell/src/signal.c` → handler compatibili con Readline.
-- `Minishell/src/wildcards.c` → globbing (estendi per `?`, `[]`, `!`).
-- Built-in (`echo`, `cd`, `pwd`, `export`, `unset`, `env`) → porta in 42sh e aggiungi `type`, `set`.
-
-Adatta le firme e centralizza le API in header comuni (`env.h`, `parser.h`, `exec.h`, `builtins.h`).
-
----
-
-**Test di validazione (rapidi)**
-- **Precedenze**:
-  ```sh
-  ls doesnotexist . 2>&1 >/dev/null
-  ls doesnotexist . >/dev/null 2>&1
-  ```
-- **Logici/sequenze**:
-  ```sh
-  false && echo NO || echo YES ; echo DONE
-  ```
-- **Subshell**:
-  ```sh
-  (echo a ; echo b) | wc -l
-  ```
-- **Espansioni**:
-  ```sh
-  echo $HOME ${?}
-  HOME=/tmp cd ; pwd
-  echo ${USER}
-  ```
-- **Heredoc**:
-  ```sh
-  cat <<'EOF'\n$HOME\nEOF
-  ```
-
----
-
-**Linee guida di qualità (bonus considerati solo se codice chiaro)**
-- Nomi di funzioni/variabili espliciti; niente `ft_parse1`/`ft_parse2`.
-- Uso giudizioso di `const`.
-- Storico git pulito con commit espliciti.
-- Test automatizzati per parser/expansioni/executor.
-
----
-
-**Cosa consegnare**
-- `42sh` eseguibile.
-- `Makefile` con regole classiche (`all`, `clean`, `fclean`, `re`, `bonus` se usi bonus).
-- `libft/` inclusa e compilata dal `Makefile` del progetto.
-- Codice senza crash e senza memory leak.
-
-Con questa roadmap puoi procedere in modo incrementale, validando ogni milestone con test specifici e mantenendo la stabilità come priorità assoluta. Se vuoi, posso preparare gli scheletri dei moduli e una bozza di `Makefile` per 42sh.
